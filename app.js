@@ -1,3 +1,5 @@
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {GLTFExporter} from 'three/addons/exporters/GLTFExporter.js';
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {Reflector} from 'three/addons/objects/Reflector.js';
@@ -65,6 +67,12 @@ function download(blob,name){const url=URL.createObjectURL(blob),a=document.crea
 function validate(p){return p&&Array.isArray(p.walls)&&p.walls.length>0&&p.walls.length<100&&p.walls.every(w=>typeof w.id==='string'&&valid(w.width,.1,30)&&valid(w.height,.1,15)&&[w.x,w.z,w.angle].every(Number.isFinite))&&Array.isArray(p.mirrors)&&p.mirrors.length<500&&p.mirrors.every(m=>typeof m.id==='string'&&valid(m.width,.05,15)&&valid(m.height,.05,15)&&[m.x,m.y,m.rot].every(Number.isFinite))&&Array.isArray(p.objects)&&p.objects.length<500&&p.material&&p.walls.some(w=>w.id===p.currentWall)}
 
 function installDirectControls(){
+ const objectsPanel=$('objects'), file=document.createElement('input');file.type='file';file.accept='.glb';file.setAttribute('aria-label','Importar modelo GLB');objectsPanel.append(file);
+ const help=document.createElement('p');help.className='hint';help.textContent='Importe modelos GLB com até 10 MB. O modelo é colocado diante da parede atual. A posição poderá ser refinada em um editor 3D.';objectsPanel.append(help);
+ file.onchange=async()=>{const f=file.files[0];if(!f)return;if(f.size>10*1024*1024)return alert('Use um GLB de até 10 MB.');try{const bytes=await f.arrayBuffer();const gltf=await new GLTFLoader().parseAsync(bytes,'');if(!scene)return alert('Modelos 3D exigem WebGL neste navegador.');gltf.scene.position.set(wall().x,0,wall().z+1);scene.add(gltf.scene);status('Modelo importado nesta sessão. Exporte a cena GLB para preservá-lo.')}catch(e){alert('Falha ao importar GLB: '+e.message)}};
+ const exportButton=document.createElement('button');exportButton.textContent='Exportar cena GLB para Blender';$('projects').append(exportButton);
+ exportButton.onclick=async()=>{if(!scene)return alert('A exportação de cena exige WebGL.');try{const copy=new THREE.Group();for(const root of scene.children){if(!root.isGroup)continue;const c=root.clone(true);c.traverse(o=>{if(o.isMesh){o.material=new THREE.MeshStandardMaterial({color:o.isReflector?'#cccccc':o.material?.color||'#dddddd',metalness:o.isReflector?1:0,roughness:o.isReflector?.01:.6});o.onBeforeRender=()=>{}}});copy.add(c)}const bytes=await new GLTFExporter().parseAsync(copy,{binary:true});download(new Blob([bytes],{type:'model/gltf-binary'}),'cena-espelhos.glb')}catch(e){alert('Falha na exportação: '+e.message)}};
+
  $('hidePanel').onclick=()=>document.querySelector('.sidebar').classList.toggle('collapsed');
  document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>document.querySelector('.sidebar').classList.remove('collapsed')));
  for(const [fields,button] of [[['wallName','wallWidth','wallHeight','wallX','wallZ','wallAngle'],'saveWall'],[['mirrorName','mirrorWidth','mirrorHeight','mirrorX','mirrorY','mirrorWall'],'applyMirror'],[['objectName','objectWidth','objectHeight','objectX','objectY','objectZ','objectDepth'],'applyObject']]){
