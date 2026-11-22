@@ -1,3 +1,4 @@
+import clipping from 'https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/+esm';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {GLTFExporter} from 'three/addons/exporters/GLTFExporter.js';
 import * as THREE from 'three';
@@ -26,11 +27,24 @@ function refreshFields(){const w=wall();if(!w)return;data.currentWall=w.id;const
 }
 function size(m){return m.rot%2?[m.height,m.width]:[m.width,m.height]}
 function clearGroup(g){if(!g)return;scene.remove(g);g.traverse(o=>{if(o.isReflector){o.getRenderTarget().dispose();o.material.dispose()}else o.material?.dispose?.();o.geometry?.dispose?.()})}
-function makeScene(){clearGroup(wallGroup);clearGroup(objectGroup);mirrors3d=[];let w=wall();wallGroup=new THREE.Group();wallGroup.position.set(w.x,0,w.z);wallGroup.rotation.y=w.angle*Math.PI/180;scene.add(wallGroup);for(const other of data.walls.filter(o=>o.id!==w.id&&o.start&&o.end)){const geom=new THREE.BoxGeometry(other.width,other.height,other.thickness||.12);const mesh=new THREE.Mesh(geom,new THREE.MeshStandardMaterial({color:data.material.wall}));const world=new THREE.Vector3(other.x,other.height/2,other.z);wallGroup.updateMatrixWorld(true);mesh.position.copy(wallGroup.worldToLocal(world));mesh.rotation.y=(other.angle-w.angle)*Math.PI/180;wallGroup.add(mesh)}
- const wallMat=new THREE.MeshStandardMaterial({color:data.material.wall,roughness:1,side:THREE.DoubleSide});const surface=new THREE.Mesh(new THREE.PlaneGeometry(w.width,w.height),wallMat);surface.position.y=w.height/2;wallGroup.add(surface);
+function makeScene(){clearGroup(wallGroup);clearGroup(objectGroup);mirrors3d=[];let w=wall();syncAssets();wallGroup=new THREE.Group();wallGroup.position.set(w.x,0,w.z);wallGroup.rotation.y=w.angle*Math.PI/180;scene.add(wallGroup);if(w.start){
+ const walls=data.walls.filter(p=>p.start);
+ const levels=[0,...new Set(walls.map(p=>p.height).sort((a,b)=>a-b))];
+ for(let i=1;i<levels.length;i++){
+ const rings=walls.filter(p=>p.height>=levels[i]).map(p=>{
+ const t=p.angle*Math.PI/180,h=p.width/2,r=(p.thickness||.12)/2;
+ return [[[-h,-r],[h,-r],[h,r],[-h,r],[-h,-r]].map(([x,z])=>[p.x+x*Math.cos(t)+z*Math.sin(t),-(p.z-x*Math.sin(t)+z*Math.cos(t))])];});
+ for(const polygon of clipping.union(...rings)){
+ const paths=polygon.map(r=>r.map(([x,y])=>new THREE.Vector2(x,y)));
+ const shape=new THREE.Shape(paths[0]);shape.holes=paths.slice(1).map(r=>new THREE.Path(r));
+ const mesh=new THREE.Mesh(new THREE.ExtrudeGeometry(shape,{depth:levels[i]-levels[i-1],bevelEnabled:false}),new THREE.MeshStandardMaterial({color:data.material.wall}));
+ mesh.rotation.x=-Math.PI/2;mesh.position.y=levels[i-1];scene.add(mesh);wallGroup.attach(mesh);
+ }}
+ }
+ const wallMat=new THREE.MeshStandardMaterial({color:data.material.wall,roughness:1,side:THREE.DoubleSide});const surface=new THREE.Mesh(new THREE.PlaneGeometry(w.width,w.height),wallMat);surface.position.y=w.height/2;if(!w.start)wallGroup.add(surface);
  const trim=new THREE.Mesh(new THREE.BoxGeometry(w.width+.06,.06,.1),new THREE.MeshStandardMaterial({color:'#847e72'}));trim.position.set(0,.03,.015);wallGroup.add(trim);
  for(const m of data.mirrors.filter(m=>m.wall===w.id)){const [mw,mh]=size(m),cx=-w.width/2+m.x+mw/2,cy=m.y+mh/2;const frame=new THREE.Mesh(new THREE.BoxGeometry(mw+.035,mh+.035,.045),new THREE.MeshStandardMaterial({color:'#b9a06d',metalness:.65,roughness:.3}));frame.position.set(cx,cy,.035);wallGroup.add(frame);
-  const quality={low:256,medium:512,high:1024}[data.material.quality];const dpr=Math.min(window.devicePixelRatio||1,2);const mirrorSurface=new Reflector(new THREE.PlaneGeometry(mw,mh),{textureWidth:Math.min(2048,quality*dpr),textureHeight:Math.min(2048,quality*dpr),color:0xeeeeee,clipBias:.003,multisample:0});mirrorSurface.position.set(cx,cy,.061);mirrorSurface.userData.mirrorId=m.id;mirrorSurface.userData.frame=frame;wallGroup.add(mirrorSurface);mirrors3d.push(mirrorSurface);
+  const quality={low:256,medium:512,high:1024}[data.material.quality];const dpr=Math.min(window.devicePixelRatio||1,2);const mirrorSurface=new Reflector(new THREE.PlaneGeometry(mw,mh),{textureWidth:Math.min(2048,quality*dpr),textureHeight:Math.min(2048,quality*dpr),color:0xeeeeee,clipBias:.003,multisample:0});mirrorSurface.position.set(cx,cy,(w.start?(w.thickness||.12)/2:0)+.061);mirrorSurface.userData.mirrorId=m.id;mirrorSurface.userData.frame=frame;wallGroup.add(mirrorSurface);mirrors3d.push(mirrorSurface);
  }
  objectGroup=new THREE.Group();wallGroup.add(objectGroup);for(const o of data.objects.filter(o=>o.wall===w.id)){let mesh;if(o.kind==='plant'){mesh=new THREE.Mesh(new THREE.ConeGeometry(o.width/2,o.height,10),new THREE.MeshStandardMaterial({color:'#52765c'}))}else{mesh=new THREE.Mesh(new THREE.BoxGeometry(o.width,o.height,o.depth),new THREE.MeshStandardMaterial({color:o.kind==='door'?'#87674c':o.kind==='window'?'#91afc3':'#9c8072',roughness:.8,transparent:o.kind==='window',opacity:o.kind==='window'?.65:1}))}mesh.position.set(o.x,o.y+o.height/2,o.z);objectGroup.add(mesh)}
  scene.background=new THREE.Color('#dfe5e5');scene.fog=new THREE.Fog('#dfe5e5',12,28);scene.children.find(x=>x.name==='floor')?.material.color.set(data.material.floor);const ambient=scene.children.find(x=>x.name==='ambient');if(ambient)ambient.intensity=data.material.light;setView(data.view,false)
@@ -67,11 +81,17 @@ function download(blob,name){const url=URL.createObjectURL(blob),a=document.crea
 function validate(p){return p&&Array.isArray(p.walls)&&p.walls.length>0&&p.walls.length<100&&p.walls.every(w=>typeof w.id==='string'&&valid(w.width,.1,30)&&valid(w.height,.1,15)&&[w.x,w.z,w.angle].every(Number.isFinite))&&Array.isArray(p.mirrors)&&p.mirrors.length<500&&p.mirrors.every(m=>typeof m.id==='string'&&valid(m.width,.05,15)&&valid(m.height,.05,15)&&[m.x,m.y,m.rot].every(Number.isFinite))&&Array.isArray(p.objects)&&p.objects.length<500&&p.material&&p.walls.some(w=>w.id===p.currentWall)}
 
 function installDirectControls(){
- const objectsPanel=$('objects'), file=document.createElement('input');file.type='file';file.accept='.glb';file.setAttribute('aria-label','Importar modelo GLB');objectsPanel.append(file);
+ const nav=document.createElement('div');$('walls').prepend(nav);
+ nav.innerHTML='<h3>Observador</h3><label>Altura (m) <input type="number" value="1.60" step=".05" min=".1" max="8"></label><label>Direção (graus) <input type="range" min="-180" max="180" value="0"></label><label>Inclinação <input type="range" min="-80" max="80" value="0"></label>';
+ const [eye,yaw,pitch]=nav.querySelectorAll('input');
+ function look(){if(!camera)return;const a=+yaw.value*Math.PI/180,b=+pitch.value*Math.PI/180;camera.position.y=+eye.value;controls.target.copy(camera.position).add(new THREE.Vector3(Math.sin(a)*Math.cos(b),Math.sin(b),-Math.cos(a)*Math.cos(b)));controls.update()}
+ for(const el of [eye,yaw,pitch])el.oninput=look;
+ for(const [label,x,z] of [['Avançar',0,-1],['Recuar',0,1],['Esquerda',-1,0],['Direita',1,0]]){const btn=document.createElement('button');btn.textContent=label;btn.onclick=()=>{if(!camera)return;const step=new THREE.Vector3(x,0,z).applyAxisAngle(new THREE.Vector3(0,1,0),-yaw.value*Math.PI/180).multiplyScalar(.35);camera.position.add(step);look()};nav.append(btn)}
+ const objectsPanel=$('objects'), file=document.createElement('input');file.type='file';file.accept='.glb';file.setAttribute('aria-label','Importar modelo GLB');objectsPanel.append(file);const catalog=document.createElement('a');catalog.href='https://poly.pizza/';catalog.target='_blank';catalog.rel='noopener';catalog.textContent='Buscar objetos 3D no Poly Pizza';objectsPanel.append(catalog);
  const help=document.createElement('p');help.className='hint';help.textContent='Importe modelos GLB com até 10 MB. O modelo é colocado diante da parede atual. A posição poderá ser refinada em um editor 3D.';objectsPanel.append(help);
- file.onchange=async()=>{const f=file.files[0];if(!f)return;if(f.size>10*1024*1024)return alert('Use um GLB de até 10 MB.');try{const bytes=await f.arrayBuffer();const gltf=await new GLTFLoader().parseAsync(bytes,'');if(!scene)return alert('Modelos 3D exigem WebGL neste navegador.');gltf.scene.position.set(wall().x,0,wall().z+1);scene.add(gltf.scene);status('Modelo importado nesta sessão. Exporte a cena GLB para preservá-lo.')}catch(e){alert('Falha ao importar GLB: '+e.message)}};
+ file.onchange=async()=>{const f=file.files[0];if(!f)return;if(f.size>10*1024*1024)return alert('Use um GLB de até 10 MB.');try{const bytes=await f.arrayBuffer();const gltf=await new GLTFLoader().parseAsync(bytes,'');if(!scene)return alert('Modelos 3D exigem WebGL neste navegador.');gltf.scene.position.set(wall().x,0,wall().z+1);gltf.scene.userData.asset=true;scene.add(gltf.scene);const reader=new FileReader();reader.onload=()=>{(data.assets??=[]).push({name:f.name,url:reader.result,x:gltf.scene.position.x,z:gltf.scene.position.z});persist()};reader.readAsDataURL(f);status('Modelo importado nesta sessão. Exporte a cena GLB para preservá-lo.')}catch(e){alert('Falha ao importar GLB: '+e.message)}};
  const exportButton=document.createElement('button');exportButton.textContent='Exportar cena GLB para Blender';$('projects').append(exportButton);
- exportButton.onclick=async()=>{if(!scene)return alert('A exportação de cena exige WebGL.');try{const copy=new THREE.Group();for(const root of scene.children){if(!root.isGroup)continue;const c=root.clone(true);c.traverse(o=>{if(o.isMesh){o.material=new THREE.MeshStandardMaterial({color:o.isReflector?'#cccccc':o.material?.color||'#dddddd',metalness:o.isReflector?1:0,roughness:o.isReflector?.01:.6});o.onBeforeRender=()=>{}}});copy.add(c)}const bytes=await new GLTFExporter().parseAsync(copy,{binary:true});download(new Blob([bytes],{type:'model/gltf-binary'}),'cena-espelhos.glb')}catch(e){alert('Falha na exportação: '+e.message)}};
+ exportButton.onclick=async()=>{if(!scene)return alert('A exportação de cena exige WebGL.');try{const copy=new THREE.Group();scene.updateMatrixWorld(true);for(const root of scene.children){if(!root.isGroup)continue;root.traverse(o=>{if(!o.isMesh)return;const mat=o.userData.mirrorId?new THREE.MeshStandardMaterial({metalness:1,roughness:.015}):o.material;const mesh=new THREE.Mesh(o.geometry,mat);o.matrixWorld.decompose(mesh.position,mesh.quaternion,mesh.scale);copy.add(mesh)})}const bytes=await new GLTFExporter().parseAsync(copy,{binary:true});download(new Blob([bytes],{type:'model/gltf-binary'}),'cena-espelhos.glb')}catch(e){alert('Falha na exportação: '+e.message)}};
 
  $('hidePanel').onclick=()=>document.querySelector('.sidebar').classList.toggle('collapsed');
  document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>document.querySelector('.sidebar').classList.remove('collapsed')));
@@ -98,3 +118,5 @@ function drawPlan(){
 }
 
 if(!validate(data)){data=base();projects[project]=clone(data)}bind();persist();init3d();installDirectControls();window.addEventListener('resize',()=>{if(!scene)renderFallback()});
+
+async function syncAssets(){const token=JSON.stringify(data.assets||[]);if(scene.userData.assets===token)return;scene.userData.assets=token;for(const o of scene.children.filter(o=>o.userData.asset))scene.remove(o);for(const a of data.assets||[]){if(!/^data:.*;base64,/.test(a.url))continue;try{const g=await new GLTFLoader().loadAsync(a.url);if(scene.userData.assets!==token)return;g.scene.position.set(a.x,0,a.z);g.scene.userData.asset=true;scene.add(g.scene)}catch{status('Falha ao abrir objeto salvo',true)}}}
